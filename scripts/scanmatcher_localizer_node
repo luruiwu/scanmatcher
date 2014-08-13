@@ -1,0 +1,9 @@
+#!/usr/bin/env python
+import rospy
+
+from scanmatcher.scanmatcher_localizer import scanmatcher_localizer
+
+if __name__ == '__main__':
+    rospy.init_node('scanmatcher_localizer_node', anonymous=False)
+    node = scanmatcher_localizer()
+    node.run()

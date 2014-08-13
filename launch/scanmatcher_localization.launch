@@ -1,0 +1,9 @@
+<?xml version="1.0" ?>
+<launch>
+  <node name="scanmatcher_odom" output="screen" pkg="scanmatcher" type="scanmatcher_odom_node">
+    <param name="send_odom_base_tf" value="True"/>
+    <remap from="/odom" to="/scanmatcher/odom"/>
+  </node>
+  <node args="/home/privat/maps/autolab.yaml" name="map_server" output="screen" pkg="map_server" type="map_server"/>
+  <node name="scanmatcher_localizer" output="screen" pkg="scanmatcher" type="scanmatcher_localizer_node"/>
+</launch>

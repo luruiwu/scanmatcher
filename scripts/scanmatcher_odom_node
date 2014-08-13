@@ -1,0 +1,9 @@
+#!/usr/bin/env python
+import rospy
+
+from scanmatcher.scanmatcher_odom import scanmatcher_odom
+
+if __name__ == '__main__':
+    rospy.init_node('scanmatcher_odom_node', anonymous=False)
+    node = scanmatcher_odom()
+    node.run()
