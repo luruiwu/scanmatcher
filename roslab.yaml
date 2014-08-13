@@ -1,0 +1,386 @@
+backend: python
+dependencies:
+- name: rospy
+- name: pymrpt
+libraries:
+- author: Change name in author settings
+  comm:
+    pub:
+    - msg_type: nav_msgs/Odometry
+      topic: /odom
+    sub:
+    - callback: _scan_callback
+      msg_type: sensor_msgs/LaserScan
+      topic: /scan
+  copyright: Germany
+  credits: []
+  email: semael23@gmail.com
+  functions:
+  - args: []
+    code: '# processing queue
+
+      self._scan_queue = PriorityQueue(maxsize=2)
+
+      # absolute odometry pose and current velocities
+
+      self._current_pose = pymrpt.poses.CPose2D()
+
+      self._v = .0
+
+      self._w = .0
+
+      # initialize odometry
+
+      self._odom_msg.header.frame_id = ''odom''
+
+      self._odom_msg.child_frame_id = ''base_link'''
+    name: init
+  - args: []
+    code: '# create worker thread (we do not .join() since it closes itself by ros
+      shutdown)
+
+      scanmatcher_thread = Thread(target=self.scanmatcher_worker)
+
+      scanmatcher_thread.start()
+
+      # keep it running
+
+      rospy.spin()'
+    name: run
+  - args:
+    - name: _scan_msg
+    code: "# put scans into queue\ntry:\n    self._scan_queue.put_nowait([_scan_msg.header.stamp.to_nsec(),\
+      \ _scan_msg])\nexcept Full:\n    rospy.logwarn('Dropped scan. Processing queue\
+      \ is full!')\n    pass"
+    name: _scan_callback
+  - args: []
+    code: "# vars\nhas_initial_scan = False\n# initialize ICP\nicp_options = pymrpt.slam.CICP.TConfigParams()\n\
+      icp = pymrpt.slam.CICP(icp_options)\n# create last and current laser maps\n\
+      last_map = pymrpt.maps.CSimplePointsMap()\n# setup last update time\nlast_update_time\
+      \ = rospy.Time.now()\n# loop\nwhile not rospy.is_shutdown():\n    self._scan_msg\
+      \ = LaserScan()\n    # get scan from queue\n    try:\n        item = self._scan_queue.get(timeout=5)\n\
+      \    except Empty:\n        rospy.logwarn('Got no scan from queue since 5 seconds.\
+      \ Scanmatcher will shutdown now!')\n        continue\n    self._scan_msg = item[1]\n\
+      \    self._scan_msg.ranges = list(self._scan_msg.ranges)\n    rospy.loginfo('received\
+      \ scan...')\n    # update current stamp for publishers\n    self._current_stamp\
+      \ = self._scan_msg.header.stamp\n    # get laser scanner pose\n    laser_pose,\
+      \ ok = self.get_base_link_base_laser_tf()\n    self._sensor_pose = pymrpt.poses.CPose3D()\n\
+      \    self._sensor_pose.from_ROS_Pose_msg(laser_pose.pose)\n    # convert data\n\
+      \    observation = pymrpt.obs.CObservation2DRangeScan()\n    observation.from_ROS_LaserScan_msg(self._scan_msg,\
+      \ self._sensor_pose)\n    # set current map from scan\n    current_map = pymrpt.maps.CSimplePointsMap()\n\
+      \    current_map.loadFromRangeScan(observation)\n    # match maps\n    if has_initial_scan:\n\
+      \        # no initial guess (pure incremental)\n        initial_guess = pymrpt.poses.CPosePDFGaussian()\n\
+      \        # run ICP algorithm\n        pose_change, running_time, info = icp.AlignPDF(last_map,\
+      \ current_map, initial_guess)\n        rospy.loginfo('icp goodness: {}'.format(info.goodness))\n\
+      \        rospy.loginfo('icp run_time: {}'.format(running_time))\n        rospy.loginfo('pose\
+      \  change: {}'.format(pose_change.mean))\n        # check goodness\n#      \
+      \  if info.goodness > .8:\n        rospy.loginfo('...updating odometry.')\n\
+      \        # get time delta\n        d_t = (last_update_time - self._current_stamp).to_sec()\n\
+      \        # update current pose and velocities\n        self._current_pose +=\
+      \ pose_change.mean\n        dist = pose_change.mean.norm()\n        self._v\
+      \ = dist / d_t\n        self._w = pose_change.mean.phi / d_t\n        self.publish_odom()\n\
+      \        # update last update time\n        last_update_time = self._current_stamp\n\
+      \        # update last map\n        last_map = current_map\n#        else:\n\
+      #            rospy.logwarn('...lost odometry...')\n    else:\n        rospy.loginfo('...is\
+      \ inital one!')\n        # load initial scan to last map\n        last_map =\
+      \ current_map\n        # mark initial as received\n        has_initial_scan\
+      \ = True\n#    rospy.loginfo('...task done!')\n    # signalize work done\n \
+      \   self._scan_queue.task_done()\n"
+    name: scanmatcher_worker
+  - args: []
+    code: "\"\"\"\nPublish odometry and optionally \"odom -> base_link\" tf.\n\"\"\
+      \"\n# setup odometry message\nself._odom_msg.header.stamp = self._current_stamp\n\
+      self._odom_msg.pose.pose = self._current_pose.to_ROS_Pose_msg()\nself._odom_msg.twist.twist.linear.x\
+      \ = self._v\nself._odom_msg.twist.twist.angular.z = self._w\n# publish odom\n\
+      self._odom_pub.publish(self._odom_msg)\n# publish \"odom -> base_link\" tf on\
+      \ demand\nif self._send_odom_base_tf:\n   pose_msg = PoseStamped()\n   pose_msg.header.stamp\
+      \ = self._current_stamp\n   pose_msg.pose = self._odom_msg.pose.pose\n   self.send_odom_base_link_tf(pose_msg)"
+    name: publish_odom
+  import:
+  - include: ''
+    module: pymrpt
+  - include: Thread, Lock
+    module: threading
+  - include: PriorityQueue, Full, Empty
+    module: Queue
+  - include: ''
+    module: math
+  info: TODO
+  license: TODO
+  maintainer: Change name in author settings
+  name: scanmatcher_odom
+  param:
+  - datatype: bool
+    default: 'True'
+    name: send_odom_base_tf
+  status: freshly generated
+  tf:
+    broadcaster:
+    - child_frame: /base_link
+      parent_frame: /odom
+    listener:
+    - child_frame: /base_laser
+      parent_frame: /base_link
+  version: 0.0.1
+- author: Change name in author settings
+  comm:
+    sc:
+    - msg_type: nav_msgs/GetMap
+      topic: /static_map
+    sub:
+    - callback: _scan_callback
+      msg_type: sensor_msgs/LaserScan
+      topic: /scan
+    - callback: _map_callback
+      msg_type: nav_msgs/OccupancyGrid
+      topic: /map
+    - callback: _initialpose_callback
+      msg_type: geometry_msgs/PoseWithCovarianceStamped
+      topic: /initialpose
+  copyright: Germany
+  credits: []
+  email: semael23@gmail.com
+  functions:
+  - args:
+    - name: _scan_msg
+    code: "# put scans into queue\ntry:\n    self._scan_queue.put_nowait([_scan_msg.header.stamp.to_nsec(),\
+      \ _scan_msg])\nexcept Full:\n    rospy.logwarn('Dropped scan. Processing queue\
+      \ is full!')\n    pass"
+    name: _scan_callback
+  - args: []
+    code: "# processing queue\nself._scan_queue = PriorityQueue(maxsize=2)\n# get\
+      \ static map\nif self._use_static_map:\n    static_map_res = self._static_map_sc(self._static_map_req)\n\
+      \    static_map_res.map.data = list(static_map_res.map.data)\n    # initialize\
+      \ map with received one\n    self._map = pymrpt.maps.COccupancyGridMap2D()\n\
+      \    self._map.from_ROS_OccupancyGrid_msg(static_map_res.map)\n    # print output\n\
+      \    print 'received initial STATIC map!'\n    print static_map_res.map.info\n\
+      else:\n    # initialize empty map and wait for published ones\n    self._map\
+      \ = pymrpt.maps.COccupancyGridMap2D()    \n# setup transformations\nself._tf\
+      \ = tf.TransformerROS()\nself._map_to_odom = pymrpt.poses.CPose2D()\nself._map_to_base\
+      \ = pymrpt.poses.CPose2D()\nself._odom_to_base = pymrpt.poses.CPose2D()\n# setup\
+      \ initial map to base tf (\"/odom -> /base_link\" also should be (0,0,0))\n\
+      self._map_to_base.x = self._init_x\nself._map_to_base.y = self._init_y\nself._map_to_base.phi\
+      \ = self._init_phi\n# setup scanmatcher lock\nself._scanmatcher_lock = Lock()\n\
+      \n\n"
+    name: init
+  - args: []
+    code: '# create worker thread (we do not .join() since it closes itself by ros
+      shutdown)
+
+      scanmatcher_thread = Thread(target=self.scanmatcher_worker)
+
+      scanmatcher_thread.start()
+
+      # keep it running
+
+      rospy.spin()'
+    name: run
+  - args: []
+    code: "# vars\nhas_initial_scan = False\n# initialize ICP\nicp_options = pymrpt.slam.CICP.TConfigParams()\n\
+      icp = pymrpt.slam.CICP(icp_options)\n# loop\nwhile not rospy.is_shutdown():\n\
+      \    # get scan from queue\n    try:\n        item = self._scan_queue.get(timeout=5)\n\
+      \    except Empty:\n        rospy.logwarn('Got no scan from queue since 5 seconds.\
+      \ Scanmatcher will shutdown now!')\n        continue\n    self._scan_msg = LaserScan()\n\
+      \    self._scan_msg = item[1]\n    self._scan_msg.ranges = list(self._scan_msg.ranges)\n\
+      \    rospy.loginfo('received scan...')\n    # get laser scanner pose\n    laser_pose,\
+      \ ok = self.get_base_link_base_laser_tf()\n    self._sensor_pose = pymrpt.poses.CPose3D()\n\
+      \    self._sensor_pose.from_ROS_Pose_msg(laser_pose.pose)\n    # self get odom\
+      \ pose\n    odom_pose, ok = self.get_odom_base_link_tf()\n    self._odom_to_base\
+      \ = pymrpt.poses.CPose2D()\n    self._odom_to_base.from_ROS_Pose_msg(odom_pose.pose)\n\
+      \    # acquire lock\n    self._scanmatcher_lock.acquire()\n    # update current\
+      \ stamp for publishers\n    self._current_stamp = self._scan_msg.header.stamp\n\
+      \    # convert data\n    observation = pymrpt.obs.CObservation2DRangeScan()\n\
+      \    observation.from_ROS_LaserScan_msg(self._scan_msg, self._sensor_pose)\n\
+      \    # set current map from scan\n    current_map = pymrpt.maps.CSimplePointsMap()\n\
+      \    current_map.loadFromRangeScan(observation)\n    # match maps\n    # take\
+      \ current maintained map to base pose as initial guess (absolut pose in map)\n\
+      \    initial_guess = pymrpt.poses.CPosePDFGaussian(self._map_to_base)\n    #\
+      \ run ICP algorithm\n    aligned_pose, running_time, info = icp.AlignPDF(self._map,\
+      \ current_map, initial_guess)\n    rospy.loginfo('init.  guess: {}'.format(initial_guess.mean))\n\
+      \    rospy.loginfo('icp goodness: {}'.format(info.goodness))\n    rospy.loginfo('icp\
+      \ run_time: {}'.format(running_time))\n    rospy.loginfo('aligned pose: {}'.format(aligned_pose.mean))\n\
+      \    # check goodness\n    if info.goodness > .8:\n        rospy.loginfo('...updating\
+      \ pose in map...')\n        # update MRPT pose diff (this is actually the maintained\
+      \ tf)\n        self._map_to_base = aligned_pose.mean\n        # update last\
+      \ update time\n        last_update_time = self._current_stamp\n    else:\n \
+      \       # warn if pose lost\n        rospy.logwarn('...lost pose in map...')\n\
+      \    # update pose diff\n    map_to_base = pymrpt.poses.CPose2D(self._map_to_base)\n\
+      \    map_to_base.inverse()\n#    map_to_base_pose = PoseStamped()\n#    map_to_base_pose.header.frame_id\
+      \ = 'base_link'\n#    map_to_base_pose.header.stamp = self._scan_msg.header.stamp\n\
+      #    map_to_base_pose.pose = map_to_base.to_ROS_Pose_msg()\n#    latest_tf_pose\
+      \ = PoseStamped()\n#    try:\n#        latest_tf_pose = self._tf.transformPose('odom',\
+      \ map_to_base_pose)\n#    except (tf.LookupException, tf.ConnectivityException,\
+      \ tf.ExtrapolationException):\n#        rospy.logwarn('error while pose transformation')\n\
+      \    odom_to_base = pymrpt.poses.CPose2D(self._odom_to_base)\n    odom_to_base.inverse()\n\
+      \n    self._map_to_odom.x = self._map_to_base.x - self._odom_to_base.x\n   \
+      \ self._map_to_odom.y = self._map_to_base.y - self._odom_to_base.y\n    self._map_to_odom.phi\
+      \ = self._map_to_base.phi - self._odom_to_base.phi\n    self._map_to_odom.normalizePhi()\n\
+      \n    print \"  /map  -> /base\", self._map_to_base, map_to_base\n    print\
+      \ \"- /odom -> /base\", self._odom_to_base, odom_to_base\n    print \"= /map\
+      \  -> /odom\", self._map_to_odom\n\n    map_to_odom_pose = PoseStamped()\n \
+      \   map_to_odom_pose.pose = self._map_to_odom.to_ROS_Pose_msg()\n    # send\
+      \ \"/map -> /odom\" tf at scan time\n    map_to_odom_time = self._scan_msg.header.stamp\
+      \ + rospy.Duration(2.0)\n    map_to_odom_pose.header.stamp = self._scan_msg.header.stamp\n\
+      \    self.send_map_odom_tf(map_to_odom_pose)\n    # release lock\n    self._scanmatcher_lock.release()\n\
+      \    # signalize work done\n    rospy.loginfo('...task done!')\n    self._scan_queue.task_done()"
+    name: scanmatcher_worker
+  - args:
+    - name: _map_msg
+    code: "self._map_msg = _map_msg\nif not self._use_static_map:\n    # lock scanmatcher\n\
+      \    self._scanmatcher_lock.acquire()\n    # update map\n    self._map.from_ROS_OccupancyGrid_msg(self._map_msg)\n\
+      \    # unlock scanmatcher\n    self._scanmatcher_lock.release()\n    # print\
+      \ output\n    rospy.loginfo('received new map!')"
+    name: _map_callback
+  - args:
+    - name: _initialpose_msg
+    code: '# lock scanmatcher
+
+      self._scanmatcher_lock.acquire()
+
+      # update map odom pose diff
+
+      self._map_to_base.from_ROS_Pose_msg(_initialpose_msg.pose.pose)
+
+      # unlock scanmatcher
+
+      self._scanmatcher_lock.release()
+
+      # print output
+
+      rospy.loginfo(''received initial pose: {}''.format(self._map_to_base))'
+    name: _initialpose_callback
+  import:
+  - include: ''
+    module: pymrpt
+  - include: Thread, Lock
+    module: threading
+  - include: PriorityQueue, Full, Empty
+    module: Queue
+  - include: ''
+    module: math
+  info: TODO
+  license: TODO
+  maintainer: Change name in author settings
+  name: scanmatcher_localizer
+  param:
+  - datatype: bool
+    default: 'True'
+    name: use_static_map
+  - datatype: double
+    default: '0.0'
+    name: init_x
+  - datatype: double
+    default: '0.0'
+    name: init_y
+  - datatype: double
+    default: '0.0'
+    name: init_phi
+  status: freshly generated
+  tf:
+    broadcaster:
+    - child_frame: /odom
+      parent_frame: /map
+    listener:
+    - child_frame: /base_link
+      parent_frame: /odom
+    - child_frame: /base_laser
+      parent_frame: /base_link
+  version: 0.0.1
+- author: Change name in author settings
+  comm:
+    pub:
+    - msg_type: nav_msgs/OccupancyGrid
+      topic: /map
+    sub:
+    - callback: _scan_callback
+      msg_type: sensor_msgs/LaserScan
+      topic: /scan
+  copyright: Germany
+  credits: []
+  email: semael23@gmail.com
+  functions:
+  - args: []
+    code: '# maintained map
+
+      self._map = pymrpt.maps.COccupancyGridMap2D(-10.0, 10.0, -10.0, 10.0, 0.05)
+
+      # last map update pose
+
+      self._last_update_pose = pymrpt.poses.CPose2D()
+
+      # initial map
+
+      self._has_initial_map = False'
+    name: init
+  - args: []
+    code: rospy.spin()
+    name: run
+  - args:
+    - name: _scan_msg
+    code: "# get robot pose in map at laserscan time\npose_stamped = self.get_map_base_link_tf(stamp=_scan_msg.header.stamp)\n\
+      # convert pose\nrobot_pose = pymrpt.poses.CPose2D()\nrobot_pose.from_ROS_Pose_msg(pose_stamped.pose)\n\
+      # calculate deltas\npose_diff = self._last_update_pose - robot_pose\ndist_inc_since_last_update\
+      \ = pose_diff.norm()\nang_inc_since_last_update = pose_diff.phi\n# add laserscan\
+      \ to map depending on thresholds\nif (dist_inc_since_last_update > self._update_dist\
+      \ or ang_inc_since_last_update > self._update_ang) \n    or not self._has_initial_map:\n\
+      \    # get laser scanner pose\n    laser_pose = self.get_base_link_base_laser_tf()\n\
+      \    sensor_pose = pymrpt.poses.CPose3D()\n    sensor_pose.from_ROS_Pose_msg(laser_pose.pose)\n\
+      \    # convert scan to observation\n    observation = pymrpt.obs.CObservation2DRangeScan()\n\
+      \    observation.from_ROS_LaserScan_msg(_scan_msg)\n    # update map\n    self._map.insertObservation(observation,\
+      \ sensor_pose)\n    # publish map\n    self._map_msg = self._map.to_ROS_OccupancyGrid_msg()\n\
+      \    self._map_msg.header.stamp = _scan_msg.header.stamp\n    self._map_pub.publish(self._map_msg)\n\
+      \    # update last map update pose\n    self._last_update_pose = robot_pose\n\
+      \    # signalize that we have inital map\n    self._has_initial_map\n"
+    name: _scan_callback
+  import:
+  - include: ''
+    module: pymrpt
+  info: TODO
+  license: TODO
+  maintainer: Change name in author settings
+  name: scanmatcher_mapbuilder
+  param:
+  - datatype: double
+    default: pymrpt.utils.DEG2RAD(15.0)
+    name: update_ang
+  - datatype: string
+    default: '0.25'
+    name: update_dist
+  status: freshly generated
+  tf:
+    listener:
+    - child_frame: /base_link
+      parent_frame: /map
+  version: 0.0.1
+name: scanmatcher
+nodes:
+- library: scanmatcher_odom
+  name: scanmatcher_odom
+- library: scanmatcher_localizer
+  name: scanmatcher_localizer
+ros_launch:
+- includes: []
+  machines: []
+  name: scanmatcher_localization
+  nodes:
+  - name: scanmatcher_odom
+    node: scanmatcher_odom_node
+    output: screen
+    package: scanmatcher
+    params:
+    - name: send_odom_base_tf
+      value: 'True'
+    remaps:
+    - from: /odom
+      to: /scanmatcher/odom
+  - args: /home/privat/maps/autolab.yaml
+    name: map_server
+    node: map_server
+    output: screen
+    package: map_server
+  - name: scanmatcher_localizer
+    node: scanmatcher_localizer_node
+    output: screen
+    package: scanmatcher
+  params: []
+roslab_version: 0.0.1
